@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>J.A.R.V.I.S. · Helmet HUD</title>
+
+<!-- Tipografías tecnológicas -->
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<!-- MediaPipe Face Mesh (CDN) -->
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/face_mesh.js" crossorigin="anonymous"></script>
+   <link rel="icon" href="https://static.wikia.nocookie.net/marvelmovies/images/0/06/J.A.R.V.I.S..jpg/revision/latest?cb=20130421191808">
+<style>
+  /* ============ VARIABLES ============ */
+  :root{
+    --c:#00f2ff;               /* cian holográfico */
+    --c-dim:rgba(0,242,255,.35);
+    --c-faint:rgba(0,242,255,.12);
+    --warn:#ff4d4d;
+    --glow:0 0 6px var(--c),0 0 18px rgba(0,242,255,.5);
+    --display:'Orbitron','Courier New',monospace;
+    --mono:'Share Tech Mono','Courier New',monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:100%;height:100%;overflow:hidden;background:#02090d;color:var(--c);font-family:var(--mono)}
+
+  /* ============ CÁMARA (espejada) ============ */
+  #cam{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);
+       filter:saturate(.55) contrast(1.1) brightness(.8) hue-rotate(150deg) sepia(.25)}
+  #tint{position:fixed;inset:0;background:rgba(0,70,90,.28);mix-blend-mode:color;pointer-events:none}
+
+  /* Canvas donde se dibuja todo lo que sigue al rostro */
+  #hud{position:fixed;inset:0;width:100%;height:100%;pointer-events:none}
+
+  /* ============ MARCO DEL CASCO ============ */
+  #helmet{position:fixed;inset:0;pointer-events:none;
+    background:
+      radial-gradient(ellipse 62% 70% at 50% 50%,transparent 58%,rgba(0,12,18,.65) 82%,rgba(0,6,10,.96) 100%);}
+  #helmet::before{ /* borde del visor */
+    content:"";position:absolute;inset:2.5% 3%;border:1px solid var(--c-dim);
+    border-radius:46% / 40%;box-shadow:inset 0 0 40px rgba(0,242,255,.18),0 0 18px rgba(0,242,255,.12)}
+  #helmet::after{ /* plancha superior e inferior */
+    content:"";position:absolute;inset:0;
+    background:
+      linear-gradient(var(--c-faint),transparent 9%) top/100% 100% no-repeat,
+      linear-gradient(to top,var(--c-faint),transparent 9%) bottom/100% 100% no-repeat}
+  .corner{position:fixed;width:44px;height:44px;border:2px solid var(--c);filter:drop-shadow(0 0 5px var(--c));pointer-events:none}
+  .corner.tl{top:12px;left:12px;border-right:0;border-bottom:0}
+  .corner.tr{top:12px;right:12px;border-left:0;border-bottom:0}
+  .corner.bl{bottom:12px;left:12px;border-right:0;border-top:0}
+  .corner.br{bottom:12px;right:12px;border-left:0;border-top:0}
+
+  /* ============ EFECTOS ANALÓGICOS / GLITCH ============ */
+  #scanlines{position:fixed;inset:0;pointer-events:none;mix-blend-mode:overlay;opacity:.7;
+    background:repeating-linear-gradient(to bottom,rgba(0,0,0,.45) 0 1px,transparent 1px 3px);
+    animation:flicker .18s steps(2) infinite}
+  #sweep{position:fixed;left:0;right:0;height:120px;pointer-events:none;top:-120px;
+    background:linear-gradient(to bottom,transparent,rgba(0,242,255,.1),transparent);
+    animation:sweep 6s linear infinite}
+  body.glitch #cam{transform:scaleX(-1) translateX(6px);filter:saturate(.5) hue-rotate(190deg) contrast(1.4) brightness(1)}
+  body.glitch #hud{transform:translateX(-4px)}
+  body.glitch #scanlines{background:repeating-linear-gradient(to bottom,rgba(0,242,255,.35) 0 2px,transparent 2px 6px)}
+  @keyframes flicker{0%{opacity:.62}50%{opacity:.78}100%{opacity:.66}}
+  @keyframes sweep{to{top:100%}}
+
+  /* ============ PANELES HUD ============ */
+  .panel{position:fixed;text-shadow:var(--glow);pointer-events:none}
+  #title{top:3.2%;left:50%;transform:translateX(-50%);text-align:center;font-family:var(--display);letter-spacing:.35em;font-size:clamp(11px,1.5vw,18px)}
+  #title small{display:block;margin-top:4px;font-family:var(--mono);letter-spacing:.2em;font-size:.65em;opacity:.7}
+  #compass{position:fixed;top:9.5%;left:50%;transform:translateX(-50%);width:min(340px,50vw);overflow:hidden;white-space:nowrap;
+    font-size:11px;border-top:1px solid var(--c-dim);border-bottom:1px solid var(--c-dim);
+    -webkit-mask:linear-gradient(90deg,transparent,#000 25%,#000 75%,transparent);mask:linear-gradient(90deg,transparent,#000 25%,#000 75%,transparent)}
+  #compass div{display:inline-block;padding:3px 0;animation:marquee 18s linear infinite}
+  @keyframes marquee{to{transform:translateX(-50%)}}
+
+  #left{left:4.5%;top:20%;width:clamp(120px,15vw,200px)}
+  .stat{margin-bottom:16px;border-left:2px solid var(--c);padding-left:10px}
+  .stat label{display:block;font-size:10px;letter-spacing:.2em;opacity:.65}
+  .stat b{font-family:var(--display);font-weight:500;font-size:clamp(16px,2.1vw,26px)}
+  .stat i{font-style:normal;font-size:.5em;opacity:.7;margin-left:4px}
+
+  #right{right:4.5%;top:20%;width:clamp(130px,17vw,230px);font-size:11px}
+  .bar{margin-bottom:12px}
+  .bar span{display:flex;justify-content:space-between;letter-spacing:.15em;font-size:10px;margin-bottom:3px}
+  .bar div{height:7px;border:1px solid var(--c-dim);padding:1px}
+  .bar div u{display:block;height:100%;background:var(--c);box-shadow:var(--glow);transition:width .6s}
+  .bar.warn u{animation:blink 1s steps(2) infinite}
+  @keyframes blink{50%{opacity:.25}}
+  #log{margin-top:18px;height:110px;overflow:hidden;opacity:.8;line-height:1.5;
+    -webkit-mask:linear-gradient(transparent,#000 40%);mask:linear-gradient(transparent,#000 40%)}
+
+  /* Reactor arc (abajo-izquierda) y radar (abajo-derecha) */
+  .ring{position:fixed;bottom:5%;width:clamp(90px,13vw,170px);aspect-ratio:1;pointer-events:none;filter:drop-shadow(0 0 6px var(--c))}
+  #reactor{left:5%} #radar{right:5%}
+  .ring svg{width:100%;height:100%;overflow:visible}
+  .spin{transform-origin:50% 50%;animation:spin 12s linear infinite}
+  .spin.r{animation-direction:reverse;animation-duration:7s}
+  .spin.f{animation-duration:4s}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  #radar .beam{transform-origin:50% 50%;animation:spin 3s linear infinite}
+  .ring text{font-family:var(--display);fill:var(--c);font-size:13px;text-anchor:middle}
+
+  #status{bottom:4%;left:50%;transform:translateX(-50%);font-size:clamp(10px,1.2vw,13px);letter-spacing:.3em;text-align:center}
+  #status .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--c);margin-right:8px;box-shadow:var(--glow);animation:blink 1s steps(2) infinite}
+
+  /* ============ PANTALLA DE ARRANQUE / ERRORES ============ */
+  #boot{position:fixed;inset:0;z-index:20;background:#02090d;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    text-align:center;padding:24px;font-family:var(--display);letter-spacing:.3em;text-shadow:var(--glow);transition:opacity .8s}
+  #boot p{font-family:var(--mono);letter-spacing:.1em;margin-top:14px;max-width:520px;font-size:13px;opacity:.8}
+  #boot.hide{opacity:0;pointer-events:none}
+  #boot.err{color:var(--warn);text-shadow:0 0 10px var(--warn)}
+
+  /* ============ RESPONSIVO ============ */
+  @media (max-width:760px){
+    #left{top:17%;left:3%;width:100px} #right{display:none}
+    .stat{margin-bottom:10px}
+    #radar{display:none}
+  }
+  @media (prefers-reduced-motion:reduce){#sweep,#scanlines{animation:none}}
+</style>
+</head>
+<body>
+
+<video id="cam" autoplay playsinline muted></video>
+<div id="tint"></div>
+<canvas id="hud"></canvas>
+<div id="helmet"></div>
+<div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+<div id="sweep"></div>
+<div id="scanlines"></div>
+
+<!-- Título y brújula -->
+<div id="title" class="panel">J.A.R.V.I.S.<small>HELMET INTERFACE · MARK&nbsp;XLII</small></div>
+<div id="compass"><div id="compassTrack"></div></div>
+
+<!-- Telemetría izquierda -->
+<div id="left" class="panel">
+  <div class="stat"><label>VELOCIDAD</label><b id="spd">0</b><i>KM/H</i></div>
+  <div class="stat"><label>ALTITUD</label><b id="alt">0</b><i>M</i></div>
+  <div class="stat"><label>TEMP. REACTOR</label><b id="tmp">0</b><i>°C</i></div>
+  <div class="stat"><label>RUMBO</label><b id="hdg">0</b><i>°</i></div>
+</div>
+
+<!-- Barras y registro derecha -->
+<div id="right" class="panel">
+  <div class="bar"><span><em>REACTOR ARC</em><em id="b1v"></em></span><div><u id="b1"></u></div></div>
+  <div class="bar"><span><em>ARMADURA</em><em id="b2v"></em></span><div><u id="b2"></u></div></div>
+  <div class="bar"><span><em>PROPULSORES</em><em id="b3v"></em></span><div><u id="b3"></u></div></div>
+  <div class="bar warn"><span><em>CARGA REPULSORES</em><em id="b4v"></em></span><div><u id="b4"></u></div></div>
+  <div id="log"></div>
+</div>
+
+<!-- Reactor giratorio -->
+<div class="ring" id="reactor">
+  <svg viewBox="0 0 100 100" fill="none" stroke="#00f2ff">
+    <circle cx="50" cy="50" r="46" stroke-opacity=".3"/>
+    <g class="spin"><circle cx="50" cy="50" r="42" stroke-width="3" stroke-dasharray="20 8 4 8"/></g>
+    <g class="spin r"><circle cx="50" cy="50" r="33" stroke-width="1.5" stroke-dasharray="3 5"/></g>
+    <g class="spin f"><circle cx="50" cy="50" r="24" stroke-width="4" stroke-dasharray="30 12" stroke-opacity=".7"/></g>
+    <circle cx="50" cy="50" r="14" fill="rgba(0,242,255,.18)"/>
+    <text x="50" y="53" fill="#00f2ff" stroke="none" style="font-size:8px">ARC</text>
+  </svg>
+</div>
+
+<!-- Radar -->
+<div class="ring" id="radar">
+  <svg viewBox="0 0 100 100" fill="none" stroke="#00f2ff">
+    <circle cx="50" cy="50" r="46"/><circle cx="50" cy="50" r="30" stroke-opacity=".5"/><circle cx="50" cy="50" r="14" stroke-opacity=".5"/>
+    <path d="M50 4V96M4 50H96" stroke-opacity=".3"/>
+    <g class="beam"><path d="M50 50 L50 4 A46 46 0 0 1 82 17 Z" fill="rgba(0,242,255,.3)" stroke="none"/></g>
+    <circle cx="66" cy="32" r="2" fill="#00f2ff" stroke="none" class="blip"/>
+    <circle cx="30" cy="62" r="2" fill="#ff4d4d" stroke="none" class="blip"/>
+  </svg>
+</div>
+
+<div id="status" class="panel"><span class="dot"></span><span id="statusTxt">SISTEMAS EN LÍNEA</span></div>
+
+<!-- Arranque -->
+<div id="boot"><div id="bootTitle">INICIALIZANDO J.A.R.V.I.S.</div><p id="bootMsg">Solicitando acceso a la cámara…</p></div>
+
+<script>
+/* =====================================================
+   J.A.R.V.I.S. HELMET HUD
+   1) Utilidades y estado
+   2) Telemetría simulada (DOM)
+   3) Dibujo sobre canvas (malla, retícula, recuadro)
+   4) Cámara + MediaPipe Face Mesh
+   ===================================================== */
+
+/* ---------- 1. UTILIDADES Y ESTADO ---------- */
+const $ = s => document.querySelector(s);
+const video = $('#cam'), cv = $('#hud'), ctx = cv.getContext('2d');
+const CYAN = '0,242,255';
+let W, H;
+
+function resize(){
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+const lerp = (a, b, t) => a + (b - a) * t;
+const rnd  = (a, b) => Math.random() * (b - a) + a;
+
+let landmarks = null;      // últimos puntos crudos de MediaPipe (0..1)
+let smooth = null;         // puntos suavizados en píxeles de pantalla
+let faceSince = 0;         // momento en que apareció el rostro
+let lastSeen = 0;          // última detección válida
+let fade = 0;              // opacidad global del HUD facial (0..1)
+
+/* ---------- 2. TELEMETRÍA SIMULADA ---------- */
+// Brújula
+$('#compassTrack').textContent =
+  ('N  010  020  030  NE  050  060  070  E  100  110  120  SE  140  150  160  S  190  200  210  SW  230  240  250  W  280  290  300  NW  320  330  340  ').repeat(2);
+
+const bars = [['#b1','#b1v',[88,99]],['#b2','#b2v',[92,100]],['#b3','#b3v',[40,95]],['#b4','#b4v',[10,70]]];
+const logMsgs = ['SCAN PERIMETRAL OK','ENLACE SATELITAL ESTABLE','RECALIBRANDO REPULSORES','ANÁLISIS BIOMÉTRICO ACTIVO',
+  'INTEGRIDAD DE ARMADURA 98%','SIN AMENAZAS EN RADIO 2 KM','SINCRONIZANDO STARK-NET','FLUJO DE ENERGÍA NOMINAL'];
+let hdg = 0;
+
+function tickTelemetry(){
+  $('#spd').textContent = Math.round(rnd(780, 860));
+  $('#alt').textContent = Math.round(rnd(11800, 12100)).toLocaleString('en-US');
+  $('#tmp').textContent = rnd(1180, 1215).toFixed(0);
+  hdg = (hdg + rnd(0, 3)) % 360; $('#hdg').textContent = String(Math.round(hdg)).padStart(3, '0');
+  bars.forEach(([b, v, r]) => { const x = Math.round(rnd(r[0], r[1])); $(b).style.width = x + '%'; $(v).textContent = x + '%'; });
+}
+function pushLog(){
+  const l = $('#log'), d = document.createElement('div');
+  d.textContent = '> ' + logMsgs[Math.floor(Math.random() * logMsgs.length)];
+  l.appendChild(d); while (l.children.length > 7) l.firstChild.remove();
+}
+setInterval(tickTelemetry, 450); tickTelemetry();
+setInterval(pushLog, 1300);
+
+// Glitch aleatorio de pantalla
+(function glitchLoop(){
+  setTimeout(() => {
+    document.body.classList.add('glitch');
+    setTimeout(() => document.body.classList.remove('glitch'), rnd(60, 160));
+    glitchLoop();
+  }, rnd(2500, 7000));
+})();
+
+/* ---------- 3. DIBUJO SOBRE CANVAS ---------- */
+
+// Convierte coordenada normalizada del video a pantalla (object-fit: cover + espejo)
+function toScreen(p){
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const s = Math.max(W / vw, H / vh);
+  const x = (p.x * vw - vw / 2) * s + W / 2;
+  const y = (p.y * vh - vh / 2) * s + H / 2;
+  return { x: W - x, y };
+}
+
+// Actualiza puntos suavizados (interpolación para evitar temblor)
+function updateSmooth(){
+  if (!landmarks){ return; }
+  const pts = landmarks.map(toScreen);
+  if (!smooth || smooth.length !== pts.length) smooth = pts;
+  else for (let i = 0; i < pts.length; i++){
+    smooth[i].x = lerp(smooth[i].x, pts[i].x, .55);
+    smooth[i].y = lerp(smooth[i].y, pts[i].y, .55);
+  }
+}
+
+function glow(on){ ctx.shadowColor = on ? `rgb(${CYAN})` : 'transparent'; ctx.shadowBlur = on ? 10 : 0; }
+
+// Dibuja conjunto de conexiones [a,b] del Face Mesh
+function drawConn(conns, color, width){
+  if (typeof conns === 'undefined' || !smooth) return;
+  ctx.beginPath();
+  for (const [a, b] of conns){ ctx.moveTo(smooth[a].x, smooth[a].y); ctx.lineTo(smooth[b].x, smooth[b].y); }
+  ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke();
+}
+
+// Esquinas del recuadro de escaneo
+function brackets(x, y, w, h, l){
+  ctx.beginPath();
+  [[x,y,1,1],[x+w,y,-1,1],[x,y+h,1,-1],[x+w,y+h,-1,-1]].forEach(([cx,cy,sx,sy]) => {
+    ctx.moveTo(cx + l*sx, cy); ctx.lineTo(cx, cy); ctx.lineTo(cx, cy + l*sy);
+  });
+  ctx.stroke();
+}
+
+// Retícula de apuntado que sigue a la nariz
+function drawReticle(cx, cy, t, r){
+  ctx.save(); ctx.translate(cx, cy); ctx.lineWidth = 1.5; ctx.strokeStyle = `rgba(${CYAN},.9)`; glow(true);
+  // cruz con hueco central
+  const g = r * .22, L = r * .55;
+  ctx.beginPath();
+  ctx.moveTo(-L,0); ctx.lineTo(-g,0); ctx.moveTo(g,0); ctx.lineTo(L,0);
+  ctx.moveTo(0,-L); ctx.lineTo(0,-g); ctx.moveTo(0,g); ctx.lineTo(0,L); ctx.stroke();
+  // aro discontinuo giratorio
+  ctx.rotate(t * .8); ctx.setLineDash([14, 10]); ctx.beginPath(); ctx.arc(0,0,r*.8,0,Math.PI*2); ctx.stroke();
+  // arcos opuestos en contra-giro
+  ctx.setLineDash([]); ctx.rotate(-t * 1.9); ctx.lineWidth = 3;
+  for (let i = 0; i < 3; i++){ ctx.beginPath(); ctx.arc(0,0,r, i*2.094, i*2.094 + .9); ctx.stroke(); }
+  // marcas de graduación
+  ctx.rotate(t * 1.1); ctx.lineWidth = 1;
+  for (let i = 0; i < 36; i++){ ctx.rotate(Math.PI/18); ctx.beginPath(); ctx.moveTo(r*1.12,0); ctx.lineTo(r*(i%3?1.17:1.26),0); ctx.stroke(); }
+  ctx.restore();
+}
+
+// Dibuja texto con brillo
+function txt(s, x, y, size, alpha = 1, align = 'left'){
+  ctx.font = `${size}px 'Share Tech Mono','Courier New',monospace`;
+  ctx.textAlign = align; ctx.fillStyle = `rgba(${CYAN},${alpha})`; ctx.fillText(s, x, y);
+}
+
+function drawFace(t, now){
+  const idx = (typeof FACEMESH_TESSELATION !== 'undefined');
+  ctx.globalAlpha = fade;
+
+  // Malla facial: teselado tenue + contornos brillantes
+  glow(false);
+  if (idx) drawConn(FACEMESH_TESSELATION, `rgba(${CYAN},.16)`, .5);
+  else { ctx.fillStyle = `rgba(${CYAN},.5)`; smooth.forEach(p => ctx.fillRect(p.x, p.y, 1.5, 1.5)); }
+  glow(true);
+  if (idx){
+    drawConn(FACEMESH_FACE_OVAL, `rgba(${CYAN},.8)`, 1.2);
+    drawConn(FACEMESH_LEFT_EYE, `rgba(${CYAN},.9)`, 1);
+    drawConn(FACEMESH_RIGHT_EYE, `rgba(${CYAN},.9)`, 1);
+    drawConn(FACEMESH_LIPS, `rgba(${CYAN},.7)`, 1);
+  }
+
+  // Caja contenedora del rostro
+  let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
+  for (const p of smooth){ minX = Math.min(minX,p.x); maxX = Math.max(maxX,p.x); minY = Math.min(minY,p.y); maxY = Math.max(maxY,p.y); }
+  const pad = (maxX - minX) * .18;
+  const bx = minX - pad, by = minY - pad, bw = maxX - minX + pad*2, bh = maxY - minY + pad*2;
+  const nose = smooth[1], faceW = maxX - minX;
+
+  ctx.strokeStyle = `rgba(${CYAN},.95)`; ctx.lineWidth = 2; brackets(bx, by, bw, bh, Math.min(bw, bh) * .16);
+
+  // Línea de escaneo vertical dentro del recuadro
+  const sy = by + ((t * .45) % 1) * bh;
+  const grd = ctx.createLinearGradient(0, sy - 18, 0, sy + 2);
+  grd.addColorStop(0, `rgba(${CYAN},0)`); grd.addColorStop(1, `rgba(${CYAN},.5)`);
+  glow(false); ctx.fillStyle = grd; ctx.fillRect(bx, sy - 18, bw, 20);
+  glow(true); ctx.strokeStyle = `rgba(${CYAN},.9)`; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(bx, sy); ctx.lineTo(bx + bw, sy); ctx.stroke();
+
+  // Estado de escaneo: 0 → 100 % en 3 s y luego identificado
+  const prog = Math.min((now - faceSince) / 3000, 1);
+  const done = prog >= 1;
+  const label = done ? 'IDENTIFICANDO: TONY STARK' : `SCANNING... ${String(Math.floor(prog*100)).padStart(2,'0')}%`;
+  const fs = Math.max(11, Math.min(18, bw * .06));
+  ctx.fillStyle = `rgba(0,30,40,.7)`; ctx.fillRect(bx, by - fs*2.1, bw, fs*1.8);
+  ctx.strokeStyle = `rgba(${CYAN},.9)`; ctx.strokeRect(bx, by - fs*2.1, bw, fs*1.8);
+  txt(label, bx + bw/2, by - fs*.85, fs, (done || Math.floor(t*6) % 2) ? 1 : .55, 'center');
+  if (!done){ ctx.fillStyle = `rgba(${CYAN},.9)`; ctx.fillRect(bx, by - fs*.28, bw * prog, 3); }
+
+  // Retícula central en la nariz
+  drawReticle(nose.x, nose.y, t, Math.max(28, faceW * .2));
+
+  // Marcas sobre los iris (si refineLandmarks está activo)
+  if (smooth.length > 473){
+    [smooth[468], smooth[473]].forEach(p => {
+      ctx.strokeStyle = `rgba(${CYAN},.95)`; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.arc(p.x, p.y, faceW * .04, 0, 7); ctx.stroke();
+      brackets(p.x - faceW*.06, p.y - faceW*.06, faceW*.12, faceW*.12, faceW*.025);
+    });
+  }
+
+  // Caja de datos flotante: sigue al rostro y gira de lado según hacia dónde mire
+  const yaw = ((nose.x - (smooth[234].x + smooth[454].x)/2) / faceW) * 100; // ≈ inclinación horizontal
+  const tilt = (Math.atan2(smooth[263].y - smooth[33].y, smooth[263].x - smooth[33].x) * 180 / Math.PI);
+  const pw = 190, ph = 112;
+  let px = bx + bw + 28; if (px + pw > W - 10) px = bx - pw - 28; px = Math.max(10, px);
+  const py = Math.max(10, Math.min(H - ph - 10, by + 10 + yaw * .4));
+  ctx.fillStyle = 'rgba(0,25,35,.55)'; ctx.fillRect(px, py, pw, ph);
+  ctx.strokeStyle = `rgba(${CYAN},.8)`; ctx.lineWidth = 1; brackets(px, py, pw, ph, 14);
+  // línea de conexión rostro → caja
+  ctx.setLineDash([4,4]); ctx.beginPath(); ctx.moveTo(px < bx ? px + pw : px, py + ph/2);
+  ctx.lineTo(px < bx ? bx : bx + bw, by + bh/2); ctx.stroke(); ctx.setLineDash([]);
+  glow(false);
+  const rows = [
+    `ID    : STARK, A.T.`,
+    `YAW   : ${yaw >= 0 ? '+' : ''}${yaw.toFixed(1)}°`,
+    `ROLL  : ${tilt >= 0 ? '+' : ''}${tilt.toFixed(1)}°`,
+    `BPM   : ${Math.round(72 + Math.sin(t*2)*4)}`,
+    `EYE   : ${done ? 'LOCK' : 'ACQ...'}`
+  ];
+  rows.forEach((r, i) => txt(r, px + 12, py + 24 + i * 19, 12, .95));
+  ctx.globalAlpha = 1;
+}
+
+// Retícula en reposo cuando no hay rostro
+function drawIdle(t){
+  ctx.globalAlpha = 1 - fade;
+  drawReticle(W/2, H/2, t, Math.min(W, H) * .12);
+  txt('BUSCANDO OBJETIVO...', W/2, H/2 + Math.min(W,H)*.22, 13, Math.floor(t*2) % 2 ? 1 : .4, 'center');
+  ctx.globalAlpha = 1;
+}
+
+/* ---------- Bucle de render ---------- */
+function render(now){
+  const t = now / 1000;
+  ctx.clearRect(0, 0, W, H);
+  const present = landmarks && (now - lastSeen < 400);
+  fade = lerp(fade, present ? 1 : 0, .15);
+  if (present){ updateSmooth(); }
+  if (smooth && fade > .02 && video.videoWidth) drawFace(t, now);
+  if (fade < .98) drawIdle(t);
+  $('#statusTxt').textContent = present ? 'OBJETIVO ADQUIRIDO · SISTEMAS EN LÍNEA' : 'BUSCANDO OBJETIVO';
+  requestAnimationFrame(render);
+}
+
+/* ---------- 4. CÁMARA + MEDIAPIPE ---------- */
+function bootMsg(msg, isErr){
+  $('#bootMsg').textContent = msg;
+  if (isErr){ $('#boot').classList.add('err'); $('#bootTitle').textContent = 'ERROR DE SISTEMA'; }
+}
+
+async function init(){
+  try{
+    if (typeof FaceMesh === 'undefined') throw new Error('No se pudo cargar MediaPipe. Revisa tu conexión a internet.');
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    video.srcObject = stream; await video.play();
+    bootMsg('Cargando modelo de reconocimiento facial…');
+
+    const fm = new FaceMesh({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/${f}` });
+    fm.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: .5, minTrackingConfidence: .5 });
+
+    let first = true;
+    fm.onResults(r => {
+      const f = r.multiFaceLandmarks && r.multiFaceLandmarks[0];
+      const now = performance.now();
+      if (f){
+        if (now - lastSeen > 1000) faceSince = now;   // reinicia el escaneo si se perdió el rostro
+        landmarks = f; lastSeen = now;
+      } else landmarks = null;
+      if (first){ first = false; $('#boot').classList.add('hide'); }
+    });
+
+    // Envía frames al modelo sin acumular solicitudes
+    let busy = false;
+    (async function detect(){
+      if (!busy && video.readyState >= 2){ busy = true; try{ await fm.send({ image: video }); }catch(e){} busy = false; }
+      requestAnimationFrame(detect);
+    })();
+    requestAnimationFrame(render);
+  }catch(e){
+    const denied = e && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
+    bootMsg(denied ? 'Permiso de cámara denegado. Habilita la cámara y recarga la página.'
+                   : (e.message || 'No se pudo iniciar la cámara.'), true);
+  }
+}
+init();
+</script>
+</body>
+</html>
